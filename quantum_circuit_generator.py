@@ -1,5 +1,4 @@
 # quantum_circuit_generator.py
-# pythonCopy code
 
 # Import necessary modules
 import sys
