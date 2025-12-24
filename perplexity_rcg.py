@@ -1,5 +1,5 @@
 """
-random_qc_with_bugs.py
+perplexity_rcg.py
 
 Generate random quantum circuits and inject controllable bugs using Qiskit.
 
