@@ -1,310 +1,248 @@
-"""
-claude_rcg.py
-
-Random Quantum Circuit Generator using Cirq
-Features:
-- Multiple circuit generation strategies
-- Circuit validation and analysis
-- Export to multiple formats
-- Parameterized circuit generation
-- Circuit optimization hints
-"""
-
-import cirq
-import numpy as np
-from typing import List, Dict, Tuple, Optional
+import random
+from typing import List, Tuple, Dict
 import json
-from dataclasses import dataclass
-from enum import Enum
 
-
-class GateStrategy(Enum):
-    """Strategy for selecting gates during circuit generation"""
-    RANDOM = "random"
-    WEIGHTED = "weighted"  # More common gates appear more often
-    LAYERED = "layered"    # Organize by gate types
-    ENTANGLING = "entangling"  # Focus on creating entanglement
-
-
-@dataclass
-class CircuitConfig:
-    """Configuration for circuit generation"""
-    num_qubits: int
-    depth: int
-    strategy: GateStrategy = GateStrategy.RANDOM
-    single_qubit_gates: List[str] = None
-    two_qubit_gates: List[str] = None
-    seed: Optional[int] = None
-    allow_measurements: bool = True
-    connectivity: Optional[List[Tuple[int, int]]] = None  # Custom qubit connectivity
-
-
-class ClaudeCircuitGenerator:
-    """
-    Random quantum circuit generator with multiple strategies and features.
-    Uses Cirq framework for broader ecosystem compatibility.
-    """
+class QuantumCircuit:
+    """Represents a quantum circuit with gates and qubits."""
     
-    # Available gate sets
-    SINGLE_QUBIT_GATES = {
-        'H': cirq.H,      # Hadamard
-        'X': cirq.X,      # Pauli-X (NOT)
-        'Y': cirq.Y,      # Pauli-Y
-        'Z': cirq.Z,      # Pauli-Z
-        'S': cirq.S,      # Phase gate
-        'T': cirq.T,      # π/8 gate
-        'RX': lambda angle: cirq.rx(angle),  # Rotation around X
-        'RY': lambda angle: cirq.ry(angle),  # Rotation around Y
-        'RZ': lambda angle: cirq.rz(angle),  # Rotation around Z
-    }
-    
-    TWO_QUBIT_GATES = {
-        'CNOT': cirq.CNOT,     # Controlled-NOT
-        'CZ': cirq.CZ,         # Controlled-Z
-        'SWAP': cirq.SWAP,     # Swap gate
-        'ISWAP': cirq.ISWAP,   # iSwap gate
-    }
-    
-    # Default weights for weighted strategy
-    DEFAULT_WEIGHTS = {
-        'H': 0.3, 'X': 0.2, 'Y': 0.1, 'Z': 0.1,
-        'S': 0.1, 'T': 0.1, 'RX': 0.05, 'RY': 0.03, 'RZ': 0.02,
-        'CNOT': 0.4, 'CZ': 0.3, 'SWAP': 0.2, 'ISWAP': 0.1
-    }
-    
-    def __init__(self, config: CircuitConfig):
-        self.config = config
-        self.rng = np.random.RandomState(config.seed)
+    def __init__(self, num_qubits: int):
+        self.num_qubits = num_qubits
+        self.gates = []
         
-        # Set default gate sets if not specified
-        if config.single_qubit_gates is None:
-            self.single_gates = ['H', 'X', 'Y', 'Z']
-        else:
-            self.single_gates = config.single_qubit_gates
+    def add_gate(self, gate_type: str, qubits: List[int], params: Dict = None):
+        """Add a gate to the circuit."""
+        self.gates.append({
+            'type': gate_type,
+            'qubits': qubits,
+            'params': params or {}
+        })
+    
+    def __str__(self):
+        result = f"Quantum Circuit ({self.num_qubits} qubits)\n"
+        result += "=" * 50 + "\n"
+        for i, gate in enumerate(self.gates):
+            qubits_str = ", ".join(f"q{q}" for q in gate['qubits'])
+            params_str = ""
+            if gate['params']:
+                params_str = f" {gate['params']}"
+            result += f"{i+1}. {gate['type']}({qubits_str}){params_str}\n"
+        return result
+    
+    def to_qasm(self) -> str:
+        """Export circuit to OpenQASM format."""
+        qasm = f"OPENQASM 2.0;\ninclude \"qelib1.inc\";\n"
+        qasm += f"qreg q[{self.num_qubits}];\n"
+        qasm += f"creg c[{self.num_qubits}];\n\n"
+        
+        for gate in self.gates:
+            gate_type = gate['type'].lower()
+            qubits = gate['qubits']
             
-        if config.two_qubit_gates is None:
-            self.two_gates = ['CNOT', 'CZ']
-        else:
-            self.two_gates = config.two_qubit_gates
+            if gate_type in ['h', 'x', 'y', 'z', 's', 't']:
+                qasm += f"{gate_type} q[{qubits[0]}];\n"
+            elif gate_type == 'cx' or gate_type == 'cnot':
+                qasm += f"cx q[{qubits[0]}],q[{qubits[1]}];\n"
+            elif gate_type == 'cz':
+                qasm += f"cz q[{qubits[0]}],q[{qubits[1]}];\n"
+            elif gate_type == 'rx':
+                angle = gate['params'].get('theta', 0)
+                qasm += f"rx({angle}) q[{qubits[0]}];\n"
+            elif gate_type == 'ry':
+                angle = gate['params'].get('theta', 0)
+                qasm += f"ry({angle}) q[{qubits[0]}];\n"
+            elif gate_type == 'rz':
+                angle = gate['params'].get('theta', 0)
+                qasm += f"rz({angle}) q[{qubits[0]}];\n"
         
-        # Initialize qubits
-        self.qubits = cirq.LineQubit.range(config.num_qubits)
-        
-        # Build connectivity graph
-        self._build_connectivity()
+        return qasm
+
+class QuantumCircuitGenerator:
+    """Generates random quantum circuits."""
     
-    def _build_connectivity(self):
-        """Build qubit connectivity graph"""
-        if self.config.connectivity is not None:
-            self.connectivity = self.config.connectivity
-        else:
-            # Default: nearest-neighbor connectivity
-            self.connectivity = [
-                (i, i+1) for i in range(self.config.num_qubits - 1)
-            ]
+    SINGLE_QUBIT_GATES = ['H', 'X', 'Y', 'Z', 'S', 'T', 'RX', 'RY', 'RZ']
+    TWO_QUBIT_GATES = ['CNOT', 'CZ']
     
-    def generate(self) -> cirq.Circuit:
-        """Generate circuit based on strategy"""
-        strategy_map = {
-            GateStrategy.RANDOM: self._generate_random,
-            GateStrategy.WEIGHTED: self._generate_weighted,
-            GateStrategy.LAYERED: self._generate_layered,
-            GateStrategy.ENTANGLING: self._generate_entangling,
-        }
+    @staticmethod
+    def generate(num_qubits: int, num_gates: int, 
+                 use_parametric: bool = True) -> QuantumCircuit:
+        """
+        Generate a random quantum circuit.
         
-        circuit = strategy_map[self.config.strategy]()
+        Args:
+            num_qubits: Number of qubits in the circuit
+            num_gates: Number of gates to add
+            use_parametric: Whether to use parametric gates (RX, RY, RZ)
+        """
+        circuit = QuantumCircuit(num_qubits)
         
-        if self.config.allow_measurements:
-            circuit.append(cirq.measure(*self.qubits, key='result'))
+        available_gates = QuantumCircuitGenerator.SINGLE_QUBIT_GATES.copy()
+        if num_qubits > 1:
+            available_gates.extend(QuantumCircuitGenerator.TWO_QUBIT_GATES)
         
-        return circuit
-    
-    def _generate_random(self) -> cirq.Circuit:
-        """Pure random gate selection"""
-        circuit = cirq.Circuit()
+        if not use_parametric:
+            available_gates = [g for g in available_gates 
+                             if g not in ['RX', 'RY', 'RZ']]
         
-        for _ in range(self.config.depth):
-            for qubit_idx in range(self.config.num_qubits):
-                # Decide: single or two-qubit gate
-                if self.rng.random() < 0.7:  # 70% single-qubit
-                    gate_name = self.rng.choice(self.single_gates)
-                    gate = self._get_gate(gate_name, single_qubit=True)
-                    circuit.append(gate(self.qubits[qubit_idx]))
-                else:  # 30% two-qubit
-                    if len(self.connectivity) > 0:
-                        control, target = self.rng.choice(self.connectivity)
-                        gate_name = self.rng.choice(self.two_gates)
-                        gate = self._get_gate(gate_name, single_qubit=False)
-                        circuit.append(gate(self.qubits[control], self.qubits[target]))
-        
-        return circuit
-    
-    def _generate_weighted(self) -> cirq.Circuit:
-        """Weighted random selection (common gates appear more)"""
-        circuit = cirq.Circuit()
-        
-        # Build weighted gate list
-        all_gates = self.single_gates + self.two_gates
-        weights = [self.DEFAULT_WEIGHTS.get(g, 0.1) for g in all_gates]
-        weights = np.array(weights) / np.sum(weights)  # Normalize
-        
-        for _ in range(self.config.depth):
-            gate_name = self.rng.choice(all_gates, p=weights)
+        for _ in range(num_gates):
+            gate_type = random.choice(available_gates)
             
-            if gate_name in self.single_gates:
-                qubit_idx = self.rng.randint(0, self.config.num_qubits)
-                gate = self._get_gate(gate_name, single_qubit=True)
-                circuit.append(gate(self.qubits[qubit_idx]))
-            else:
-                if len(self.connectivity) > 0:
-                    control, target = self.rng.choice(self.connectivity)
-                    gate = self._get_gate(gate_name, single_qubit=False)
-                    circuit.append(gate(self.qubits[control], self.qubits[target]))
-        
-        return circuit
-    
-    def _generate_layered(self) -> cirq.Circuit:
-        """Layer-by-layer generation (all single-qubit, then entangling)"""
-        circuit = cirq.Circuit()
-        
-        layers_per_depth = 2  # Single-qubit layer + entangling layer
-        
-        for _ in range(self.config.depth // layers_per_depth):
-            # Single-qubit layer
-            for qubit in self.qubits:
-                gate_name = self.rng.choice(self.single_gates)
-                gate = self._get_gate(gate_name, single_qubit=True)
-                circuit.append(gate(qubit))
-            
-            # Entangling layer
-            for control, target in self.connectivity:
-                gate_name = self.rng.choice(self.two_gates)
-                gate = self._get_gate(gate_name, single_qubit=False)
-                circuit.append(gate(self.qubits[control], self.qubits[target]))
-        
-        return circuit
-    
-    def _generate_entangling(self) -> cirq.Circuit:
-        """Focus on creating maximum entanglement"""
-        circuit = cirq.Circuit()
-        
-        for _ in range(self.config.depth):
-            # Always do entangling operations
-            for control, target in self.connectivity:
-                # Add single-qubit gates before entangling
-                h_or_not = self.rng.choice([cirq.H, cirq.I])
-                circuit.append(h_or_not(self.qubits[control]))
+            if gate_type in QuantumCircuitGenerator.SINGLE_QUBIT_GATES:
+                qubit = random.randint(0, num_qubits - 1)
+                params = {}
                 
-                gate_name = self.rng.choice(self.two_gates)
-                gate = self._get_gate(gate_name, single_qubit=False)
-                circuit.append(gate(self.qubits[control], self.qubits[target]))
+                if gate_type in ['RX', 'RY', 'RZ']:
+                    params['theta'] = random.uniform(0, 2 * 3.14159)
+                
+                circuit.add_gate(gate_type, [qubit], params)
+            
+            elif gate_type in QuantumCircuitGenerator.TWO_QUBIT_GATES:
+                control = random.randint(0, num_qubits - 1)
+                target = random.randint(0, num_qubits - 1)
+                while target == control:
+                    target = random.randint(0, num_qubits - 1)
+                circuit.add_gate(gate_type, [control, target])
         
         return circuit
+
+class BugInjector:
+    """Injects various types of bugs into quantum circuits."""
     
-    def _get_gate(self, gate_name: str, single_qubit: bool):
-        """Get gate operation from name"""
-        if single_qubit:
-            gate_class = self.SINGLE_QUBIT_GATES[gate_name]
+    @staticmethod
+    def inject_invalid_qubit(circuit: QuantumCircuit) -> Tuple[QuantumCircuit, str]:
+        """Add a gate that references a non-existent qubit."""
+        if not circuit.gates:
+            return circuit, "No gates to modify"
+        
+        gate_idx = random.randint(0, len(circuit.gates) - 1)
+        gate = circuit.gates[gate_idx]
+        
+        # Change one qubit to an invalid index
+        invalid_qubit = circuit.num_qubits + random.randint(0, 5)
+        gate['qubits'][0] = invalid_qubit
+        
+        return circuit, f"Bug: Gate {gate_idx+1} references invalid qubit {invalid_qubit}"
+    
+    @staticmethod
+    def inject_duplicate_control_target(circuit: QuantumCircuit) -> Tuple[QuantumCircuit, str]:
+        """Make a two-qubit gate's control and target the same."""
+        two_qubit_gates = [i for i, g in enumerate(circuit.gates) 
+                          if len(g['qubits']) == 2]
+        
+        if not two_qubit_gates:
+            return circuit, "No two-qubit gates to modify"
+        
+        gate_idx = random.choice(two_qubit_gates)
+        gate = circuit.gates[gate_idx]
+        gate['qubits'][1] = gate['qubits'][0]
+        
+        return circuit, f"Bug: Gate {gate_idx+1} has same control and target qubit"
+    
+    @staticmethod
+    def inject_missing_parameter(circuit: QuantumCircuit) -> Tuple[QuantumCircuit, str]:
+        """Remove required parameter from a parametric gate."""
+        parametric_gates = [i for i, g in enumerate(circuit.gates) 
+                          if g['type'] in ['RX', 'RY', 'RZ']]
+        
+        if not parametric_gates:
+            return circuit, "No parametric gates to modify"
+        
+        gate_idx = random.choice(parametric_gates)
+        gate = circuit.gates[gate_idx]
+        gate['params'] = {}
+        
+        return circuit, f"Bug: Gate {gate_idx+1} missing required 'theta' parameter"
+    
+    @staticmethod
+    def inject_wrong_gate_arity(circuit: QuantumCircuit) -> Tuple[QuantumCircuit, str]:
+        """Give a gate the wrong number of qubits."""
+        if not circuit.gates:
+            return circuit, "No gates to modify"
+        
+        gate_idx = random.randint(0, len(circuit.gates) - 1)
+        gate = circuit.gates[gate_idx]
+        
+        if len(gate['qubits']) == 1:
+            # Add an extra qubit to single-qubit gate
+            gate['qubits'].append(random.randint(0, circuit.num_qubits - 1))
+            return circuit, f"Bug: Single-qubit gate {gate_idx+1} given 2 qubits"
         else:
-            gate_class = self.TWO_QUBIT_GATES[gate_name]
+            # Remove a qubit from two-qubit gate
+            gate['qubits'] = [gate['qubits'][0]]
+            return circuit, f"Bug: Two-qubit gate {gate_idx+1} given only 1 qubit"
+    
+    @staticmethod
+    def inject_invalid_gate_name(circuit: QuantumCircuit) -> Tuple[QuantumCircuit, str]:
+        """Change a gate name to something invalid."""
+        if not circuit.gates:
+            return circuit, "No gates to modify"
         
-        # Handle parameterized gates
-        if gate_name in ['RX', 'RY', 'RZ']:
-            angle = self.rng.uniform(0, 2 * np.pi)
-            return gate_class(angle)
+        gate_idx = random.randint(0, len(circuit.gates) - 1)
+        gate = circuit.gates[gate_idx]
+        old_name = gate['type']
+        gate['type'] = 'INVALID_GATE_' + str(random.randint(1, 100))
         
-        return gate_class
+        return circuit, f"Bug: Gate {gate_idx+1} changed from {old_name} to {gate['type']}"
     
-    def analyze_circuit(self, circuit: cirq.Circuit) -> Dict:
-        """Analyze generated circuit properties"""
-        gate_counts = {}
-        total_gates = 0
+    @staticmethod
+    def inject_random_bug(circuit: QuantumCircuit) -> Tuple[QuantumCircuit, str]:
+        """Inject a random bug type."""
+        bug_types = [
+            BugInjector.inject_invalid_qubit,
+            BugInjector.inject_duplicate_control_target,
+            BugInjector.inject_missing_parameter,
+            BugInjector.inject_wrong_gate_arity,
+            BugInjector.inject_invalid_gate_name
+        ]
         
-        for moment in circuit:
-            for op in moment:
-                gate_name = str(op.gate)
-                gate_counts[gate_name] = gate_counts.get(gate_name, 0) + 1
-                total_gates += 1
-        
-        return {
-            'total_gates': total_gates,
-            'actual_depth': len(circuit),
-            'gate_distribution': gate_counts,
-            'num_qubits': len(self.qubits),
-        }
-    
-    def export_qasm(self, circuit: cirq.Circuit, filename: str):
-        """Export circuit to QASM format"""
-        qasm_str = cirq.qasm(circuit)
-        with open(filename, 'w') as f:
-            f.write(qasm_str)
-        print(f"Exported to {filename}")
-    
-    def export_json(self, circuit: cirq.Circuit, filename: str):
-        """Export circuit analysis to JSON"""
-        analysis = self.analyze_circuit(circuit)
-        with open(filename, 'w') as f:
-            json.dump(analysis, f, indent=2)
-        print(f"Analysis exported to {filename}")
+        bug_func = random.choice(bug_types)
+        return bug_func(circuit)
 
-
-def main():
-    """Interactive CLI for circuit generation"""
-    print("=" * 50)
-    print("Claude's Random Quantum Circuit Generator (Cirq)")
-    print("=" * 50)
-    
-    # Get user input
-    num_qubits = int(input("\nNumber of qubits: "))
-    depth = int(input("Circuit depth: "))
-    
-    print("\nAvailable strategies:")
-    for i, strategy in enumerate(GateStrategy, 1):
-        print(f"{i}. {strategy.value}")
-    
-    strategy_choice = int(input("\nChoose strategy (1-4): ")) - 1
-    strategy = list(GateStrategy)[strategy_choice]
-    
-    seed = input("\nRandom seed (press Enter for random): ")
-    seed = int(seed) if seed else None
-    
-    # Create configuration
-    config = CircuitConfig(
-        num_qubits=num_qubits,
-        depth=depth,
-        strategy=strategy,
-        seed=seed
-    )
-    
-    # Generate circuit
-    generator = ClaudeCircuitGenerator(config)
-    circuit = generator.generate()
-    
-    # Display results
-    print("\n" + "=" * 50)
-    print("Generated Circuit:")
-    print("=" * 50)
-    print(circuit)
-    
-    # Analysis
-    print("\n" + "=" * 50)
-    print("Circuit Analysis:")
-    print("=" * 50)
-    analysis = generator.analyze_circuit(circuit)
-    for key, value in analysis.items():
-        print(f"{key}: {value}")
-    
-    # Export options
-    export = input("\nExport circuit? (qasm/json/no): ").lower()
-    if export == 'qasm':
-        filename = input("Filename (without extension): ")
-        generator.export_qasm(circuit, f"{filename}.qasm")
-    elif export == 'json':
-        filename = input("Filename (without extension): ")
-        generator.export_json(circuit, f"{filename}.json")
-    
-    print("\nDone!")
-
-
+# Example usage
 if __name__ == "__main__":
-    main()
+    print("=" * 60)
+    print("QUANTUM CIRCUIT GENERATOR WITH BUG INJECTION")
+    print("=" * 60)
+    
+    # Generate a clean circuit
+    print("\n1. CLEAN CIRCUIT")
+    print("-" * 60)
+    clean_circuit = QuantumCircuitGenerator.generate(
+        num_qubits=4, 
+        num_gates=8, 
+        use_parametric=True
+    )
+    print(clean_circuit)
+    
+    # Generate a buggy circuit
+    print("\n2. BUGGY CIRCUIT")
+    print("-" * 60)
+    buggy_circuit = QuantumCircuitGenerator.generate(
+        num_qubits=4, 
+        num_gates=8, 
+        use_parametric=True
+    )
+    buggy_circuit, bug_description = BugInjector.inject_random_bug(buggy_circuit)
+    print(f"Injected: {bug_description}\n")
+    print(buggy_circuit)
+    
+    # Export to QASM
+    print("\n3. QASM EXPORT (Clean Circuit)")
+    print("-" * 60)
+    print(clean_circuit.to_qasm())
+    
+    print("\n4. MULTIPLE BUG INJECTION")
+    print("-" * 60)
+    multi_bug_circuit = QuantumCircuitGenerator.generate(
+        num_qubits=3, 
+        num_gates=6, 
+        use_parametric=True
+    )
+    bugs = []
+    for i in range(3):
+        multi_bug_circuit, bug_desc = BugInjector.inject_random_bug(multi_bug_circuit)
+        bugs.append(bug_desc)
+    
+    print("Injected bugs:")
+    for bug in bugs:
+        print(f"  - {bug}")
+    print("\n" + str(multi_bug_circuit))
